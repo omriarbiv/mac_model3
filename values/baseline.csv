@@ -14,7 +14,7 @@ p_cure_wo_rif_late,0.01666667,0.01542,0.08161,Probability of culture conversion 
 p_cure_wo_azi_6mo,0.2172532,0.08161,0.31871,Probability of culture conversion before \n6 azithromycin modification
 p_cure_wo_azi_late,0.05548,0.01542,0.08161,Probability of culture conversion after\n6 months with azithromycin modification
 p_recurrence,0.0154491,0.007,0.032,Probability of disease recurrence
-discount,0.03,0,0,Yearly discount
+discount,0,0,0,Yearly discount
 u_obv,0.82,0.729,1,Utility of clinical observation
 u_T,0.82,0.729,1,Utility of treatment
 DisU_SE_Rif,0.026,0.01,0.05,Disutilility from rifampin toxicity
