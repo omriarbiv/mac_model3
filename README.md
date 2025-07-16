@@ -1,1 +1,1 @@
-# mac_model3
+# MAC-PD Treatment Strategy Microsimulation
