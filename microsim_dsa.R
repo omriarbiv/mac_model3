@@ -154,7 +154,7 @@ for(i in 1:length(dsa_params)){
 }
 
 
-# saveRDS(owsa_dsa, file = "Results/owsa_dsa.RData")
+saveRDS(owsa_dsa, file = "Results/owsa_dsa.RData")
 # owsa_dsa <- readRDS("Results/owsa_dsa.RData")
 
 
