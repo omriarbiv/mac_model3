@@ -14,15 +14,15 @@ p_cure_wo_rif_late,0.01666667,0.01542,0.08161,Probability of culture conversion 
 p_cure_wo_azi_6mo,0.2172532,0.08161,0.31871,Probability of culture conversion before \n6 azithromycin modification
 p_cure_wo_azi_late,0.05548,0.01542,0.08161,Probability of culture conversion after\n6 months with azithromycin modification
 p_recurrence,0.0154491,0.007,0.032,Probability of disease recurrence
-discount,0.015,0,0.03,Yearly discount
+discount,0.03,0,0,Yearly discount
 u_obv,0.82,0.729,1,Utility of clinical observation
 u_T,0.82,0.729,1,Utility of treatment
 DisU_SE_Rif,0.026,0.01,0.05,Disutilility from rifampin toxicity
 DisU_SE_Azi,0.026,0.01,0.05,Disutility from azithromycin toxicity
 U_SE_Etb,0.4,0.28,0.6,Disutility from ethambutol toxicity
-u_cure,0.93,0.9,1,Utility after cure
+u_cure,0.904,0.873,0.935,Utility after cure
 u_death,0,0,0,Utility of death
 DisU_obsT,0.017,0,0.1,Disutility of disease progression
 DisU_T,0,0,0.1,Disutility from treatment
-hr_cc6m,0.51,0.35,0.74,Hazard ratio of culture conversion\nin first 6 months
+hr_cc6m,0.51,0.35,1,Hazard ratio of culture conversion\nin first 6 months
 hr,1.33,1,1.57,Hazard ratio of MAC-pulmonary disease

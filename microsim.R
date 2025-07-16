@@ -1,7 +1,3 @@
-library(tidyverse)
-# library(dampack)
-# library(darthtools)
-
 ###########################################################
 ### Helper functions
 r_p <- function(rate, time = 1) { return(1 - exp(-rate * time)) }  

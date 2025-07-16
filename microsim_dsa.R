@@ -1,8 +1,6 @@
 library(tidyverse)
-# library(dampack)
 library(parallel)
-# library(darthtools)
-source("microsim.R") # For the microsim_model function
+source("microsim.R")
 source("Functions/life_expectancy.R")
 cycle_length <- 1 / 12
 
@@ -64,7 +62,6 @@ fl <- 40    # Years
 
 set.seed(100)
 b.t <- microsim_model(params_base, "treat", n_p = ni, fup = fl)
-set.seed(101)
 b.o <- microsim_model(params_base, "observe", n_p = ni, fup = fl)
 
 base_result <- tibble(
@@ -76,12 +73,12 @@ base_result <- tibble(
   mutate(across(2:4, ~ .x / 12))
 
 # saveRDS(base_result, file = "Results/base.RData")
-base_result <- readRDS("Results/base.RData")
+# base_result <- readRDS("Results/base.RData")
 
 ###########################################################
 ### Running the one way DSA
 # not_in_dsa <- c("u_death")
-not_in_dsa <- c("u_death")
+not_in_dsa <- c("u_death", "discount")
 
 # Initiate empty list
 owsa_dsa <- lapply(dsa_val, \(x) 
@@ -158,7 +155,7 @@ for(i in 1:length(dsa_params)){
 
 
 # saveRDS(owsa_dsa, file = "Results/owsa_dsa.RData")
-owsa_dsa <- readRDS("Results/owsa_dsa.RData")
+# owsa_dsa <- readRDS("Results/owsa_dsa.RData")
 
 
 ###########################################################
@@ -279,24 +276,17 @@ twsa_dsa_summary <- twsa_dsa |>
 # all(bind_rows(twsa_dsa_summary)$le_strategy == "Treatment")
 
 ## plot
-# twsa_plot <- list()
-# 
-# twsa_dsa_summary |> 
-#   map(rename(x = 1))
-# 
-# for(i in 1:length(twsa_dsa_summary)) {
 twsa_plot1 <- twsa_dsa_summary[[5]] |>
   ggplot(aes(hr, hr_cc6m)) +
   geom_tile(aes(fill = le_strategy), colour = "black") +
-  labs(x = "Hazard ratio of patients with MAC-PD",
-       y = "Hazard ratio of early culture conversion",
+  labs(x = "Hazard ratio of mortality for patients with MAC-PD",
+       y = paste("Hazard ratio of martality for patients with\n",
+                 "early culture conversion"),
        fill = "Strategy") +
   scale_x_continuous(expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0)) +
   scale_fill_brewer(palette = "Set2") +
   theme_linedraw()
-  
-# }
 
 ###########################################################
 ### Plotting OWSA
@@ -390,7 +380,7 @@ ggsave("twsa_plot1.pdf", plot = twsa_plot1, path = "Plots/",
 
 
 ###########################################################
-### Statistics from baseline probabilities
+### Statistics from baseline probabilities (Table 2)
 
 ###
 # For table
@@ -433,16 +423,6 @@ mean(rowSums(b.t$state_matrix == "T" |
                b.t$state_matrix == "TMV+TM2" |
                b.t$state_matrix == "TMV+TM1+2"))
 # [1] 24.5726
-quantile(rowSums(b.t$state_matrix == "T" |
-                   b.t$state_matrix == "TMV" | 
-                   b.t$state_matrix == "TM1" |
-                   b.t$state_matrix == "TM2" |
-                   b.t$state_matrix == "TM1+2" |
-                   b.t$state_matrix == "TMV+TM1" | 
-                   b.t$state_matrix == "TMV+TM2" |
-                   b.t$state_matrix == "TMV+TM1+2"), c(0.025, 0.975))
-# 2.5% 97.5% 
-#   14    56 
 
 mean(rowSums(b.o$state_matrix == "T" |
                b.o$state_matrix == "TMV" | 
@@ -452,23 +432,13 @@ mean(rowSums(b.o$state_matrix == "T" |
                b.o$state_matrix == "TMV+TM1" | 
                b.o$state_matrix == "TMV+TM2" |
                b.o$state_matrix == "TMV+TM1+2"))
-# [1] 7.6431
-quantile(rowSums(b.o$state_matrix == "T" |
-                   b.o$state_matrix == "TMV" | 
-                   b.o$state_matrix == "TM1" |
-                   b.o$state_matrix == "TM2" |
-                   b.o$state_matrix == "TM1+2" |
-                   b.o$state_matrix == "TMV+TM1" | 
-                   b.o$state_matrix == "TMV+TM2" |
-                   b.o$state_matrix == "TMV+TM1+2"), c(0.025, 0.975))
-# 2.5% 97.5% 
-#   0    40 
+# [1] 7.8998
 
 ## Progress to treatment
-sum(b.t$obsTcounter > 0)
-# [1] 3199
-sum(b.o$obsTcounter > 0)
-# [1] 3541
+sum(b.t$obsTcounter > 0) / ni
+# [1] 0.3199
+sum(b.o$obsTcounter > 0) / ni
+# [1] 0.3612
 
 ## Number of individuals on observation requiring treatment
 sum(rowSums(b.o$state_matrix == "T" |
@@ -478,72 +448,66 @@ sum(rowSums(b.o$state_matrix == "T" |
               b.o$state_matrix == "TM1+2" |
               b.o$state_matrix == "TMV+TM1" | 
               b.o$state_matrix == "TMV+TM2" |
-              b.o$state_matrix == "TMV+TM1+2") > 0)
-# [1] 3541
+              b.o$state_matrix == "TMV+TM1+2") > 0) / ni
+# [1] 0.3612
 
 ## Individuals with rifampin intolerance
 sum(rowSums(b.t$state_matrix == "TM1" | 
               b.t$state_matrix == "TM1+2" |
               b.t$state_matrix == "TMV+TM1" |
-              b.t$state_matrix == "TMV+TM1+2") > 1)
-# [1] 935
+              b.t$state_matrix == "TMV+TM1+2") > 1) / ni
+# [1] 0.0935
 sum(rowSums(b.o$state_matrix == "TM1" | 
               b.o$state_matrix == "TM1+2" |
               b.o$state_matrix == "TMV+TM1" |
-              b.o$state_matrix == "TMV+TM1+2") > 1)
-# [1] 294
+              b.o$state_matrix == "TMV+TM1+2") > 1) / ni
+# [1] 0.0308
 
 ## Individuals with azi intolerance
 sum(rowSums(b.t$state_matrix == "TM2" | 
               b.t$state_matrix == "TM1+2" |
               b.t$state_matrix == "TMV+TM2" |
-              b.t$state_matrix == "TMV+TM1+2") > 1)
-# [1] 406
+              b.t$state_matrix == "TMV+TM1+2") > 1) / ni
+# [1] 0.0406
 
 sum(rowSums(b.o$state_matrix == "TM2" | 
               b.o$state_matrix == "TM1+2" |
               b.o$state_matrix == "TMV+TM2" |
-              b.o$state_matrix == "TMV+TM1+2") > 1)
-# [1] 136
+              b.o$state_matrix == "TMV+TM1+2") > 1) / ni
+# [1] 0.0121
 
 
 ## Individuals with ethambutol intolerance
 sum(rowSums(b.t$state_matrix == "TMV" | 
               b.t$state_matrix == "TMV+TM1" |
               b.t$state_matrix == "TMV+TM2" |
-              b.t$state_matrix == "TMV+TM1+2") > 1)
-# [1] 130
+              b.t$state_matrix == "TMV+TM1+2") > 1) / ni
+# [1] 0.013
 sum(rowSums(b.o$state_matrix == "TMV" | 
               b.o$state_matrix == "TMV+TM1" |
               b.o$state_matrix == "TMV+TM2" |
-              b.o$state_matrix == "TMV+TM1+2") > 1)
-# [1] 25
+              b.o$state_matrix == "TMV+TM1+2") > 1) / ni
+# [1] 0.0035
 
 ## More than one adverse event
 sum(rowSums(b.t$state_matrix == "TM1+2" | 
               b.t$state_matrix == "TMV+TM1" |
               b.t$state_matrix == "TMV+TM2" |
-              b.t$state_matrix == "TMV+TM1+2") > 1)
-# [1] 41
+              b.t$state_matrix == "TMV+TM1+2") > 1) / ni
+# [1] 0.0041
 sum(rowSums(b.o$state_matrix == "TM1+2" | 
               b.o$state_matrix == "TMV+TM1" |
               b.o$state_matrix == "TMV+TM2" |
-              b.o$state_matrix == "TMV+TM1+2") > 1)
-# [1] 9
+              b.o$state_matrix == "TMV+TM1+2") > 1) / ni
+# [1] 0.001
 
 ## Individuals in the cure state
-sum(rowSums(b.t$state_matrix == "Cure") > 1)
-# [1] 9592
-mean(rowSums(b.t$state_matrix == "Cure"))
-# [1] 139.2082
-quantile(rowSums(b.t$state_matrix == "Cure"), c(0.025, 0.975))
-# 2.5% 97.5% 
-#   0   314 
-sum(rowSums(b.o$state_matrix == "Cure") > 1)
-# [1] 9071
-mean(rowSums(b.o$state_matrix == "Cure"))
-# [1] 105.2126
-quantile(rowSums(b.o$state_matrix == "Cure"), c(0.025, 0.975))
-# 2.5% 97.5% 
-#   0   274 
+sum(rowSums(b.t$state_matrix == "Cure") > 1) / ni
+# [1] 0.9592
+mean(rowSums(b.t$state_matrix == "Cure")) / 12
+# [1] 11.60068
+sum(rowSums(b.o$state_matrix == "Cure") > 1) / ni
+# [1] 0.9016
+mean(rowSums(b.o$state_matrix == "Cure")) / 12
+# [1] 8.815425
 

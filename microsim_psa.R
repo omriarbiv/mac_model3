@@ -1,4 +1,3 @@
-# library(dampack)
 library(tidyverse)
 library(parallel)
 library(patchwork)
@@ -15,8 +14,8 @@ names(params_base) <- params_name
 
 # Adding information for hazard ratio
 params_base$hrm1 <- log(baseline.vals["hr_cc6m", "value"])
-params_base$hrv1 <- ((log(baseline.vals["hr_cc6m", "max_value"]) - 
-                        log(baseline.vals["hr_cc6m", "min_value"])) / 3.92) ^ 2
+params_base$hrv1 <- ((log(0.74) - log(baseline.vals["hr_cc6m", "min_value"])) 
+                     / 3.92) ^ 2
 
 params_base$hrm2 <- log(baseline.vals["hr", "value"])
 params_base$hrv2 <- ((baseline.vals["hr", "max_value"] - 
