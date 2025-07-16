@@ -154,9 +154,21 @@ for(i in 1:length(dsa_params)){
 }
 
 
-saveRDS(owsa_dsa, file = "Results/owsa_dsa.RData")
+# saveRDS(owsa_dsa, file = "Results/owsa_dsa.RData")
 # owsa_dsa <- readRDS("Results/owsa_dsa.RData")
 
+# owsa_dsa |> 
+#   bind_rows() |> 
+#   mutate(util_trt_pref = trt_util > obs_util) |> 
+#   mutate(util_le_pref = trt_le > obs_le) |> 
+#   summarize(
+#     util_trt_pref = all(util_trt_pref),
+#     util_le_pref = all(util_le_pref)
+#   )
+##    # A tibble: 1 × 2
+##    util_trt_pref util_le_pref
+##    <lgl>         <lgl>       
+##   1 TRUE          TRUE   
 
 ###########################################################
 ### Two way sensitivity analyses
@@ -262,7 +274,7 @@ for(i in 1:length(twsa_dsa)) {
   }
 }
 
-saveRDS(twsa_dsa, file = "Results/twsa_dsa.RData")
+# saveRDS(twsa_dsa, file = "Results/twsa_dsa.RData")
 # twsa_dsa <- readRDS("Results/twsa_dsa.RData")
 
 twsa_dsa_summary <- twsa_dsa |>
