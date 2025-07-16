@@ -6,6 +6,9 @@ cycle_length <- 1 / 12
 
 ###########################################################
 ### Baseline values
+ni <- 1e4   # Number of people
+fl <- 40    # Years
+
 # Obtaining baseline values
 baseline.vals <- read.csv("values/baseline.csv", 
                           row.names = "variable_name")
@@ -57,9 +60,6 @@ params_base$p_death <- life.table |>
 
 ###########################################################
 ### Running the base model
-ni <- 1e4   # Number of people
-fl <- 40    # Years
-
 set.seed(100)
 b.t <- microsim_model(params_base, "treat", n_p = ni, fup = fl)
 b.o <- microsim_model(params_base, "observe", n_p = ni, fup = fl)
@@ -208,7 +208,7 @@ s_seq <- seq(1, n_dsa ^ 2, by = move_by)
 
 for(i in 1:length(twsa_dsa)) {
   cat("\nCombination", i, "of", length(twsa_dsa), "\n")
-  seed <- 512 + (i * 2)
+  seed <- (i * 2)
   
   # Names of variables included and excluded
   dsa_param_names <- colnames(twsa_dsa[[i]][1:2])
@@ -284,8 +284,8 @@ twsa_dsa_summary <- twsa_dsa |>
                le_strategy = ifelse(trt_le > obs_le,
                                     "Treatment", "Observation")))
 
-# all(bind_rows(twsa_dsa_summary)$util_strategy == "Treatment")
-# all(bind_rows(twsa_dsa_summary)$le_strategy == "Treatment")
+all(bind_rows(twsa_dsa_summary)$util_strategy == "Treatment")
+all(bind_rows(twsa_dsa_summary)$le_strategy == "Treatment")
 
 ## plot
 twsa_plot1 <- twsa_dsa_summary[[5]] |>
@@ -298,6 +298,18 @@ twsa_plot1 <- twsa_dsa_summary[[5]] |>
   scale_x_continuous(expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0)) +
   scale_fill_brewer(palette = "Set2") +
+  theme_linedraw()
+
+twsa_plot2 <- twsa_dsa_summary[[5]] |>
+  ggplot(aes(hr, hr_cc6m)) +
+  geom_tile(aes(fill = util_strategy), colour = "black") +
+  labs(x = "Hazard ratio of mortality for patients with MAC-PD",
+       y = paste("Hazard ratio of martality for patients with\n",
+                 "early culture conversion"),
+       fill = "Strategy") +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_brewer(palette = "Set1") +
   theme_linedraw()
 
 ###########################################################
@@ -386,9 +398,6 @@ ggsave("owsa_plot2.1.pdf", plot = owsa_plot2.1, path = "Plots/",
 ggsave("twsa_plot1.pdf", plot = twsa_plot1, path = "Plots/",
        height = 4, width = 6, units = "in")
 
-# par_names <- unique(owsa_qalys2$parameter)
-# qalys_sep <- lapply(par_names, \(x) owsa_qalys2[owsa_qalys2 == x,])
-# names(qalys_sep) <- par_names
 
 
 ###########################################################
