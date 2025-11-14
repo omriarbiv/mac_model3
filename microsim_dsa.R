@@ -1,12 +1,14 @@
 library(tidyverse)
 library(parallel)
 source("microsim.R")
-source("Functions/life_expectancy.R")
+source("Functions/functions.R")
 cycle_length <- 1 / 12
+save_dir <- "/scratch/oarbiv/mac_model3_results/"
+files_dir <- "/home/oarbiv/mac_model3/"
 
 ###########################################################
 ### Baseline values
-ni <- 1e4   # Number of people
+ni <- 100   # Number of people
 fl <- 40    # Years
 
 # Obtaining baseline values
@@ -66,14 +68,14 @@ b.o <- microsim_model(params_base, "observe", n_p = ni, fup = fl)
 
 base_result <- tibble(
   treatment = c("Treatment", "Observation"),
-  avg = c(mean(b.t$util_total), mean(b.o$util_total)),
-  se = c(sd(b.t$util_total), sd(b.o$util_total)) / sqrt(ni),
+  qaly = c(mean(b.t$util_total), mean(b.o$util_total)),
+  # se = c(sd(b.t$util_total), sd(b.o$util_total)) / sqrt(ni),
   life_expectancy = c(mean(life_expectancy(b.t$state_matrix)),
                       mean(life_expectancy(b.o$state_matrix)))) |> 
-  mutate(across(2:4, ~ .x / 12))
+  mutate(across(-1, ~ .x / 12))
 
 # saveRDS(base_result, file = "Results/base.RData")
-# base_result <- readRDS("Results/base.RData")
+base_result <- readRDS("Results/base.RData")
 
 ###########################################################
 ### Running the one way DSA
@@ -89,9 +91,10 @@ owsa_dsa <- owsa_dsa[!names(owsa_dsa) %in% not_in_dsa]
 dsa_params <- names(owsa_dsa)
 
 n_cores <- detectCores(logical = FALSE)
-pb <- txtProgressBar(min = 1, max = length(dsa_params), style = 3)
+# pb <- txtProgressBar(min = 1, max = length(dsa_params), style = 3)
 
 for(i in 1:length(dsa_params)){
+  print(i)
   # Seed
   s <- i + 2
   
@@ -149,7 +152,7 @@ for(i in 1:length(dsa_params)){
     unlist(lapply(1:n_dsa, \(x) 
                   mean(life_expectancy(tmp.o[[x]]$state_matrix))))
   
-  setTxtProgressBar(pb, i)
+  # setTxtProgressBar(pb, i)
   
 }
 
@@ -389,14 +392,14 @@ owsa_plot2.1 <- owsa_dsa_long |>
   theme(panel.grid = element_blank(),
         text = element_text(size = 14))
 
-ggsave("owsa_plot1.pdf", plot = owsa_plot1, path = "Plots/",
-       height = 12, width = 19, units = "in")
-ggsave("owsa_plot2.pdf", plot = owsa_plot2, path = "Plots/",
-       height = 12, width = 19, units = "in")
-ggsave("owsa_plot2.1.pdf", plot = owsa_plot2.1, path = "Plots/",
-       height = 4, width = 6, units = "in")
-ggsave("twsa_plot1.pdf", plot = twsa_plot1, path = "Plots/",
-       height = 4, width = 6, units = "in")
+# ggsave("owsa_plot1.pdf", plot = owsa_plot1, path = save_dir/
+#        height = 12, width = 19, units = "in")
+# ggsave("owsa_plot2.pdf", plot = owsa_plot2, path = "Plots/",
+#        height = 12, width = 19, units = "in")
+# ggsave("owsa_plot2.1.pdf", plot = owsa_plot2.1, path = "Plots/",
+#        height = 4, width = 6, units = "in")
+# ggsave("twsa_plot1.pdf", plot = twsa_plot1, path = "Plots/",
+#        height = 4, width = 6, units = "in")
 
 
 
