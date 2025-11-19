@@ -2,7 +2,7 @@
 library(tidyverse)
 source("microsim.R")
 
-function(beta_params) {
+beta_params <- function(mean, sigma) {
   alpha <- ((1 - mean)/sigma^2 - 1/mean) * mean^2
   beta <- alpha * (1/mean - 1)
   params <- list(alpha = alpha, beta = beta)

@@ -1,539 +1,467 @@
 library(tidyverse)
 library(parallel)
+library(patchwork)
 source("microsim.R")
+source("Functions/gen_psa_params.R")
 source("Functions/functions.R")
-cycle_length <- 1 / 12
-save_dir <- "/scratch/oarbiv/mac_model3_results/"
-files_dir <- "/home/oarbiv/mac_model3/"
+
+colour1 <- c("#2D93AD", "#985F99", "#E9AFA3")
+colour2 <- c("#A3333D", "#F2D0A4", "#629677")
 
 ###########################################################
-### Baseline values
-ni <- 1e6   # Number of people
-fl <- 40    # Years
+### Setup
 
-# Obtaining baseline values
-baseline.vals <- read.csv("values/baseline.csv", 
+# save_dir <- "/scratch/oarbiv/mac_model3_results/"
+save_dir <- "Results/no_discount/"
+# files_dir <- "/home/oarbiv/mac_model3/"
+files_dir <- ""
+n_cores <- detectCores(logical = FALSE)
+
+baseline.vals <- read.csv(paste0(files_dir, "values/baseline.csv"), 
                           row.names = "variable_name")
 params_base <- as.list(baseline.vals$value)
-params_max <- as.list(baseline.vals$max_value)
-params_min <- as.list(baseline.vals$min_value)
-
 params_name <- rownames(baseline.vals)
 names(params_base) <- params_name
-names(params_min) <- params_name
-names(params_max) <- params_name
 
-# For DSA
-n_dsa <- 10
-dsa_val <- map2(.x = params_min, 
-                .y = params_max, 
-                \(x,y) seq(x, y, length.out = n_dsa))
+# Adding information for hazard ratio
+params_base$hrm1 <- log(baseline.vals["hr_cc6m", "value"])
+params_base$hrv1 <- ((log(0.74) - log(baseline.vals["hr_cc6m", "min_value"])) 
+                     / 3.92) ^ 2
 
-# Reading life table from Canada Census for females in 2021
-life.table <- read.csv("values/2022_lifetable.csv") |> 
+params_base$hrm2 <- log(baseline.vals["hr", "value"])
+params_base$hrv2 <- ((baseline.vals["hr", "max_value"] - 
+                        baseline.vals["hr", "min_value"]) / 3.92) ^ 2
+
+life.table <- read.csv(paste0(files_dir, "values/2022_lifetable.csv")) |>
   select("Age", "qx") |>  # qx is the death rate
-  rename(age = Age, base_rate = qx) |> 
+  rename(age = Age, control_rate = qx) |>
   # Changing age to be just the number
-  mutate(age = as.numeric(str_split_i(age, " ", i = 1)))
-
-# Retrieves the rate of death from the life table 
-# (bcc = base culture conversion)
-params_base$p_death <- life.table |> 
-  # Adding additional rows so that we can align ages
-  add_row(age = 111:120, base_rate = rep(1, 10)) |> 
-  rename(control_rate = base_rate) |> 
-  mutate(ntm_rate = control_rate * params_base$hr) |> 
-  # Death rate for those who had culture conversion
-  # in first 3 months
-  mutate(cc6m_rate = ntm_rate * params_base$hr_cc6m) |> 
+  mutate(age = as.numeric(str_split_i(age, " ", i = 1))) |>
   as.matrix()
 
-## For debugging. Comment out the next part in the working 
-## model -------------------------------------------------
-# list2env(params_base, .GlobalEnv)
-# r <- params_base
-# l_params <- params_base
-# n_p = 100
-# fup = 30
-# cycle_length = 1 / 12
-# given_seed = 100
-# arm <- "treat"
-# cycle <- 1
+cols_names <- c("trt_util", "obs_util", 
+                "trt_le", "obs_le",
+                paste0("trt_util_y", 1:40),
+                paste0("obs_util_y", 1:40))
 
 ###########################################################
-### Running the base model
-set.seed(100)
-b.t <- microsim_model(params_base, "treat", n_p = ni, fup = fl)
-b.o <- microsim_model(params_base, "observe", n_p = ni, fup = fl)
+### Core function
 
-base_result <- tibble(
-  treatment = c("Treatment", "Observation"),
-  qaly = c(mean(b.t$util_total), mean(b.o$util_total)),
-  # se = c(sd(b.t$util_total), sd(b.o$util_total)) / sqrt(ni),
-  life_expectancy = c(mean(life_expectancy(b.t$state_matrix)),
-                      mean(life_expectancy(b.o$state_matrix)))) |> 
-  mutate(across(-1, ~ .x / 12))
-
-saveRDS(base_result, file = paste0(save_dir, "dsa/base.RData"))
-# base_result <- readRDS("Results/base.RData")
-
-###########################################################
-### Running the one way DSA
-# not_in_dsa <- c("u_death")
-not_in_dsa <- c("u_death")
-
-# Initiate empty list
-owsa_dsa <- lapply(dsa_val, \(x) 
-                   tibble(value = x,
-                          trt_util = NA, trt_le = NA,
-                          obs_util = NA, obs_le = NA))
-owsa_dsa <- owsa_dsa[!names(owsa_dsa) %in% not_in_dsa]
-dsa_params <- names(owsa_dsa)
-
-n_cores <- detectCores(logical = FALSE)
-pb <- txtProgressBar(min = 1, max = length(dsa_params), style = 3)
-
-for(i in 1:length(dsa_params)){
-  # Seed
-  s <- i + 2
+run_psa <- function(iter, save_psa = T,
+                    params_base = params_base, 
+                    baseline.vals = baseline.vals, 
+                    life.table = life.table, ni = ni) {
   
-  # Selecting parameter
-  param <- dsa_params[i]
+  # Generating random parameters from their distributions
+  d_psa_params <- gen_psa_params(n_psa = iter[length(iter)],
+                                 pr = 0,
+                                 psa_params = params_base,
+                                 life.table = life.table) 
+  # Re-organizing psa_params to be in the same style as params_base
+  psa_params <- lapply(iter, \(x) lapply(d_psa_params, `[`, x))
+  for(i in 1:length(iter)) {
+    psa_params[[i]]$p_death <- matrix(
+      unlist(psa_params[[i]]$p_death, use.names = T), 
+      ncol = 4, byrow = F, 
+      dimnames = list(NULL, c("age", "control_rate", "ntm_rate", "cc6m_rate"))
+    )
+  }
+
+  # Running PSA for treatment & obs with random parameters
+  print("Running Treatment Arms")
+  psa.t <- mclapply(psa_params, \(x) 
+               microsim_model(x, arm = "treat", n_p = ni, fup = fl, 
+                              cycle_length = 1 / 12),
+              mc.cores = n_cores - 1)
   
-  # Preparing parameter sets for each variable to be varied
-  params_tmp <- replicate(n_dsa, params_base)
-  params_tmp[param, ] <- dsa_val[[param]]
+  print("Running Observational Arms")
+  psa.o <- mclapply(psa_params, \(x) 
+               microsim_model(x, arm = "observe",  n_p = ni, fup = fl, 
+                              cycle_length = 1 / 12),
+               mc.cores = n_cores - 1)
   
-  # Fix death if we are changing HR
-  if(param == "hr") {
-    pd <- params_tmp["p_death",][[1]] # all identical
-    for(ii in 1:n_dsa){
-      new_hr <- unlist(params_tmp["hr",])
-      params_tmp["p_death",][[ii]][,"ntm_rate"] = 
-        pd[,"control_rate"] * new_hr[ii]
-      params_tmp["p_death",][[ii]][,"cc6m_rate"] = 
-        params_tmp["p_death",][[ii]][,"ntm_rate"] * 
-        params_base$hr_cc6m
-    }
-  } else if(param == "hr_cc6m") {
-    pd <- params_tmp["p_death",][[1]] # all identical
-    for(ii in 1:n_dsa){
-      new_hrcc6m <- unlist(params_tmp["hr_cc6m",])
-      params_tmp["p_death",][[ii]][,"cc6m_rate"] = 
-        pd[,"ntm_rate"] * new_hrcc6m[[ii]]
-    }
+  # Combining parameters in matrix to save
+  psa_result <- mclapply(1:length(iter), \(x)
+                       cbind(psa.t[[x]]$util_total, 
+                             psa.o[[x]]$util_total,
+                             life_expectancy(psa.t[[x]]$state_matrix),
+                             life_expectancy(psa.o[[x]]$state_matrix),
+                             yearly_qaly(psa.t[[x]]$util_matrix),
+                             yearly_qaly(psa.o[[x]]$util_matrix)),
+                       mc.cores = n_cores - 1)
+  
+  for(i in 1:length(iter)) {
+    colnames(psa_result[[i]]) <- cols_names
   }
   
-  # Running Treatment
-  set.seed(s)
-  tmp.t <- mclapply(1:n_dsa, \(x) 
-                    microsim_model(params_tmp[,x], arm = "treat",
-                                   n_p = ni, fup = fl),
-                    mc.cores = n_cores - 1)
-  
-  # Observation
-  set.seed(s + 1)
-  tmp.o <- mclapply(1:n_dsa, \(x) 
-                    microsim_model(params_tmp[,x], arm = "observe",
-                                   n_p = ni, fup = fl),
-                    mc.cores = n_cores - 1)
-  
-  # Extracting values
-  owsa_dsa[[param]]$trt_util <- 
-    unlist(lapply(1:n_dsa, \(x) mean(tmp.t[[x]]$util_total)))
-  owsa_dsa[[param]]$trt_le <- 
-    unlist(lapply(1:n_dsa, \(x) 
-                  mean(life_expectancy(tmp.t[[x]]$state_matrix))))
-  
-  owsa_dsa[[param]]$obs_util <- 
-    unlist(lapply(1:n_dsa, \(x) mean(tmp.o[[x]]$util_total)))
-  owsa_dsa[[param]]$obs_le <- 
-    unlist(lapply(1:n_dsa, \(x) 
-                  mean(life_expectancy(tmp.o[[x]]$state_matrix))))
-  
-  setTxtProgressBar(pb, i)
-  
-}
-
-
-saveRDS(owsa_dsa, file = paste0(save_dir, "dsa/owsa_dsa.RData"))
-# owsa_dsa <- readRDS("Results/owsa_dsa.RData")
-
-# owsa_dsa |> 
-#   bind_rows() |> 
-#   mutate(util_trt_pref = trt_util > obs_util) |> 
-#   mutate(util_le_pref = trt_le > obs_le) |> 
-#   summarize(
-#     util_trt_pref = all(util_trt_pref),
-#     util_le_pref = all(util_le_pref)
-#   )
-##    # A tibble: 1 × 2
-##    util_trt_pref util_le_pref
-##    <lgl>         <lgl>       
-##   1 TRUE          TRUE   
-
-###########################################################
-### Two way sensitivity analyses
-# Initialize list
-twsa_dsa <- list()
-
-# Probability of spontaneous culture conversion and observation 
-# to treatment
-twsa_dsa[[1]] <- expand_grid(p_spont_cure = dsa_val$p_spont_cure, 
-                             p_prog = dsa_val$p_prog)
-
-# Utility of observation and utility of treatment
-twsa_dsa[[2]] <- expand_grid(u_obv = dsa_val$u_obv, 
-                             u_T = dsa_val$u_T)
-
-# Utility of treatment and utility of cure
-twsa_dsa[[3]] <- expand_grid(u_cure = dsa_val$u_cure, 
-                             u_T = dsa_val$u_T)
-
-# Utility of emb intolerance and ethambutol medication 
-# intolerance
-twsa_dsa[[4]] <- expand_grid(p_vis = dsa_val$p_vis, 
-                             U_SE_Etb = dsa_val$U_SE_Etb)
-
-# HR of culture conversion in 3 months of treatment and HR of 
-# patients with MAC-PD
-twsa_dsa[[5]] <- expand_grid(hr = dsa_val$hr, 
-                             hr_cc6m = dsa_val$hr_cc6m)
-
-twsa_dsa <- lapply(twsa_dsa, \(x) 
-                   mutate(x, "trt_util" = NA, "trt_le" = NA, 
-                          "obs_util" = NA, "obs_le" = NA))
-
-# Sequence variables
-move_by <- 10
-s_seq <- seq(1, n_dsa ^ 2, by = move_by)
-
-for(i in 1:length(twsa_dsa)) {
-  cat("\nCombination", i, "of", length(twsa_dsa), "\n")
-  seed <- (i * 2)
-  
-  # Names of variables included and excluded
-  dsa_param_names <- colnames(twsa_dsa[[i]][1:2])
-  other_params <- within(params_base, rm(list = dsa_param_names))
-  
-  # Deal with death separately
-  other_params2 <- within(other_params, rm("p_death"))
-  tmp_params <- lapply(other_params2, \(x) rep(x, move_by))
-  tmp_params$p_death <- rep(list(other_params[["p_death"]]), move_by)
-  
-  for(ii in s_seq) {
-    cat("\r  Part", ii, "-", ii + move_by - 1, 
-        "of", dim(twsa_dsa[[i]])[1])
-    
-    # Make temporary df with values of sensitivity analysis
-    tmp_seq <- ii:(ii + move_by - 1)
-    tmp_df <- twsa_dsa[[i]][tmp_seq, 1:2]
-    r <- tmp_params
-    
-    r[[dsa_param_names[1]]] <- tmp_df[[dsa_param_names[1]]]
-    r[[dsa_param_names[2]]] <- tmp_df[[dsa_param_names[2]]]
-    
-    # Incorporating HR into death table
-    if(any(dsa_param_names == "hr")) {
-      for (iii in 1:length(r$p_death)) {
-        r[["p_death"]][[iii]][,"ntm_rate"] <- 
-          r[["p_death"]][[iii]][,"control_rate"] * r[["hr"]][iii]
-        r[["p_death"]][[iii]][,"cc6m_rate"] <- 
-          r[["p_death"]][[iii]][,"ntm_rate"] * r[["hr_cc6m"]][iii]
-      }
-    }
-    
-    # Change orientation
-    r <- lapply(1:move_by, \(x) lapply(r, `[`, x))
-    
-    # Unlist death
-    for(iii in 1:move_by) {
-      r[[iii]][["p_death"]] <- r[[iii]][["p_death"]][[1]]
-    }
-    
-    # Run the analysis, store in temporary `tmp` lists
-    set.seed(seed)
-    tmp.t <- mclapply(r, \(x) 
-                      microsim_model(x, arm = "treat", n_p = ni, fup = fl),
-                      mc.cores = n_cores - 1)
-    
-    tmp.o <- mclapply(r, \(x) 
-                      microsim_model(x, arm = "observe", n_p = ni, fup = fl),
-                      mc.cores = n_cores - 1)
-    
-    # Extract values from list into summary values
-    twsa_dsa[[i]][["trt_util"]][tmp_seq] <-  
-      unlist(lapply(1:move_by, \(x) mean(tmp.t[[x]]$util_total)))
-    twsa_dsa[[i]][["trt_le"]][tmp_seq] <- 
-      unlist(lapply(1:move_by, 
-                    \(x) mean(life_expectancy(tmp.t[[x]]$state_matrix))))
-    twsa_dsa[[i]][["obs_util"]][tmp_seq] <- 
-      unlist(lapply(1:move_by, \(x) mean(tmp.o[[x]]$util_total)))
-    twsa_dsa[[i]][["obs_le"]][tmp_seq] <- 
-      unlist(lapply(1:move_by, 
-                    \(x) mean(life_expectancy(tmp.o[[x]]$state_matrix))))
-    
+  if(save_psa) {
+    saveRDS(
+      psa_result, file = paste0(
+      save_dir, "psa/psa_n", 
+      iter[1], "_", iter[length(iter)], 
+      ".RData")
+    )
   }
+  return(psa_result)
 }
 
-saveRDS(twsa_dsa, file = paste0(save_dir, "dsa/twsa_dsa.RData"))
-# twsa_dsa <- readRDS("Results/twsa_dsa.RData")
+###########################################################
+### Running PSA
 
-twsa_dsa_summary <- twsa_dsa |>
-  map(~ mutate(.x,
-               util_strategy = ifelse(trt_util > obs_util,
-                                      "Treatment", "Observation"),
-               le_strategy = ifelse(trt_le > obs_le,
-                                    "Treatment", "Observation")))
+ni <- 1e4
+fl <- 40
+niter <- 1e4
+move_by <- 50
+s_seq <- seq(1, niter, by = move_by)
 
-all(bind_rows(twsa_dsa_summary)$util_strategy == "Treatment")
-all(bind_rows(twsa_dsa_summary)$le_strategy == "Treatment")
-
-## plot
-twsa_plot1 <- twsa_dsa_summary[[5]] |>
-  ggplot(aes(hr, hr_cc6m)) +
-  geom_tile(aes(fill = le_strategy), colour = "black") +
-  labs(x = "Hazard ratio of mortality for patients with MAC-PD",
-       y = paste("Hazard ratio of martality for patients with\n",
-                 "early culture conversion"),
-       fill = "Strategy") +
-  scale_x_continuous(expand = c(0, 0)) +
-  scale_y_continuous(expand = c(0, 0)) +
-  scale_fill_brewer(palette = "Set2") +
-  theme_linedraw()
-
-twsa_plot2 <- twsa_dsa_summary[[5]] |>
-  ggplot(aes(hr, hr_cc6m)) +
-  geom_tile(aes(fill = util_strategy), colour = "black") +
-  labs(x = "Hazard ratio of mortality for patients with MAC-PD",
-       y = paste("Hazard ratio of martality for patients with\n",
-                 "early culture conversion"),
-       fill = "Strategy") +
-  scale_x_continuous(expand = c(0, 0)) +
-  scale_y_continuous(expand = c(0, 0)) +
-  scale_fill_brewer(palette = "Set1") +
-  theme_linedraw()
+for (i in 1:length(s_seq)) {
+  start_time <- Sys.time()
+  iter <- s_seq[i]:(s_seq[i] + move_by - 1)
+  set.seed(iter[1])
+  cat("Running sequence ", iter[1], " to ", iter[length(iter)], "\n")
+  p <- run_psa(iter, params_base = params_base, life.table = life.table)
+  print(Sys.time() - start_time)
+}
 
 ###########################################################
-### Plotting OWSA
-owsa_dsa_long <- lapply(
-  owsa_dsa, \(x)
-  x |> 
-    pivot_longer(
-      cols = !value,
-      names_to = c("strategy", "stat"),
-      names_pattern = "(.*)_(.*)",
-      values_to = "v"
-    ) |> 
-    pivot_wider(
-      names_from = "stat",
-      values_from = "v"
-    )) |> 
-  bind_rows(.id = "name") |> 
+### Analyzing PSA
+
+# Find files in Results folder
+psa_files <- str_c(save_dir, "psa/", 
+                   list.files(paste0(save_dir, "psa/")))
+
+# Chunk PSA files for memory benefit
+chunk_size <- 10
+chunk_start <- 1
+s_seq <- seq(chunk_start, length(psa_files), by = chunk_size)
+psa_mean <- tibble()
+
+for(i in 1:length(s_seq)) {
+  files_to_download <- psa_files[s_seq[i] : (s_seq[i] + chunk_size - 1)]
+  psa_df <- mclapply(files_to_download, readRDS, mc.cores = n_cores - 1) 
+  psa_df_tmp <- map(1:length(psa_df), 
+                    ~ bind_rows(map(psa_df[[.x]], colMeans))) |> 
+    bind_rows() |> 
+    mutate(across(ends_with("util"), ~ .x / 12),
+           across(ends_with("le"), ~ .x - 70),
+           across(matches(".*_util_y\\d.*"), ~ .x / 12))
+  
+  psa_mean <- bind_rows(psa_mean, psa_df_tmp)
+}
+
+psa_mean <- psa_mean |> 
   mutate(
-    strategy = case_when(
-      strategy == "obs" ~ "Observation",
-      strategy == "trt" ~ "Treatment"), 
-    name = as_factor(name),
-    # Change life expectancy to years
-    le = le / 12) |> 
-  # Add names for plotting
-  left_join(rownames_to_column(baseline.vals, var = "name"), 
-            by = "name") |>
-  # Clean up
-  select(!c("value.y", "min_value", "max_value")) |> 
-  rename(value = value.x) |> 
-  # Changing rate to yearly probability
-  mutate(
-    value = ifelse(str_starts(value, "p_"), 
-                   r_p(p_r(value), 12),
-                   value)
+    delta_util = trt_util - obs_util,
+    delta_le = trt_le - obs_le,
+    delta_util_y1 = trt_util_y1 - obs_util_y1,
+    delta_util_y2 = trt_util_y2 - obs_util_y2,
+    delta_util_y3 = trt_util_y3 - obs_util_y3,
+    delta_util_y4 = trt_util_y4 - obs_util_y4,
+    delta_util_y5 = trt_util_y5 - obs_util_y5,
+    delta_util_y6 = trt_util_y6 - obs_util_y6,
+    delta_util_y7 = trt_util_y7 - obs_util_y7,
+    delta_util_y8 = trt_util_y8 - obs_util_y8,
+    delta_util_y9 = trt_util_y9 - obs_util_y9,
+    delta_util_y10 = trt_util_y10 - obs_util_y10,
+    delta_util_y11 = trt_util_y11 - obs_util_y11,
+    delta_util_y12 = trt_util_y12 - obs_util_y12,
+    delta_util_y13 = trt_util_y13 - obs_util_y13,
+    delta_util_y14 = trt_util_y14 - obs_util_y14,
+    delta_util_y15 = trt_util_y15 - obs_util_y15,
+    delta_util_y16 = trt_util_y16 - obs_util_y16,
+    delta_util_y17 = trt_util_y17 - obs_util_y17,
+    delta_util_y18 = trt_util_y18 - obs_util_y18,
+    delta_util_y19 = trt_util_y19 - obs_util_y19,
+    delta_util_y20 = trt_util_y20 - obs_util_y20,
+    delta_util_y21 = trt_util_y21 - obs_util_y21,
+    delta_util_y22 = trt_util_y22 - obs_util_y22,
+    delta_util_y23 = trt_util_y23 - obs_util_y23,
+    delta_util_y24 = trt_util_y24 - obs_util_y24,
+    delta_util_y25 = trt_util_y25 - obs_util_y25,
+    delta_util_y26 = trt_util_y26 - obs_util_y26,
+    delta_util_y27 = trt_util_y27 - obs_util_y27,
+    delta_util_y28 = trt_util_y28 - obs_util_y28,
+    delta_util_y29 = trt_util_y29 - obs_util_y29,
+    delta_util_y30 = trt_util_y30 - obs_util_y30,
+    delta_util_y31 = trt_util_y31 - obs_util_y31,
+    delta_util_y32 = trt_util_y32 - obs_util_y32,
+    delta_util_y33 = trt_util_y33 - obs_util_y33,
+    delta_util_y34 = trt_util_y34 - obs_util_y34,
+    delta_util_y35 = trt_util_y35 - obs_util_y35,
+    delta_util_y36 = trt_util_y36 - obs_util_y36,
+    delta_util_y37 = trt_util_y37 - obs_util_y37,
+    delta_util_y38 = trt_util_y38 - obs_util_y38,
+    delta_util_y39 = trt_util_y39 - obs_util_y39,
+    delta_util_y40 = trt_util_y40 - obs_util_y40
+  )
+
+psa_mean_total <- psa_mean |> 
+  select(!matches("y\\d.*$"))
+
+psa_year_mean <- psa_mean |> 
+  select(matches("y\\d.*$")) |> 
+  summarise(across(everything(), mean)) |> 
+  mutate(measure = "mean")
+
+psa_year_lci <- psa_mean |> 
+  select(matches("y\\d.*$")) |> 
+  summarise(across(everything(), ~ quantile(.x, 0.025))) |> 
+  mutate(measure = "lci")
+
+psa_year_uci <- psa_mean |> 
+  select(matches("y\\d.*$")) |> 
+  summarise(across(everything(), ~ quantile(.x, 0.975))) |> 
+  mutate(measure = "uci")
+
+psa_year <- bind_rows(
+  psa_year_mean,
+  psa_year_lci,
+  psa_year_uci
+) |> 
+  pivot_longer(
+    cols = !measure,
+    names_to = c("strategy", "year"),
+    names_pattern = "(.*)_util_y(.*)"
   ) |> 
-  mutate(full_name = str_replace_all(full_name, "\\\\n", "\n")) |> 
-  filter(name != "DisU_T")
-
-owsa_plot1 <- owsa_dsa_long |> 
-  ggplot(aes(value, util)) + 
-  geom_line(aes(colour = strategy), linewidth = 1.5) +
-  facet_wrap(vars(full_name), scales = "free") + 
-  theme_linedraw() +
-  labs(x = "Parameter Value", y = "QALYs", colour = "Strategy") + 
-  scale_colour_brewer(palette = "Set1") +
-  scale_y_continuous(
-    labels = scales::number_format(accuracy = 0.1)) +
-  theme(panel.grid = element_blank(),
-        text = element_text(size = 14))
-
-owsa_plot2 <- owsa_dsa_long |> 
-  ggplot(aes(value, le)) + 
-  geom_line(aes(colour = strategy), linewidth = 1.5) +
-  facet_wrap(vars(full_name), scales = "free") + 
-  theme_linedraw() +
-  labs(x = "Parameter Value", y = "Life Exectancy (Years)", 
-       colour = "Strategy") + 
-  scale_colour_brewer(palette = "Set2") +
-  scale_y_continuous(
-    labels = scales::number_format(accuracy = 0.1)) +
-  theme(panel.grid = element_blank(),
-        text = element_text(size = 14))
-
-owsa_plot2.1 <- owsa_dsa_long |>
-  filter(name == "hr_cc6m") |> 
-  ggplot(aes(value, le)) + 
-  geom_line(aes(colour = strategy), linewidth = 1.5) +
-  facet_wrap(vars(full_name), scales = "free") + 
-  theme_linedraw() +
-  labs(x = "Parameter Value", y = "Life Exectancy (Years)", 
-       colour = "Strategy") + 
-  scale_colour_brewer(palette = "Set2") +
-  scale_y_continuous(
-    labels = scales::number_format(accuracy = 0.1)) +
-  theme(panel.grid = element_blank(),
-        text = element_text(size = 14))
-
-ggsave("owsa_plot1.pdf", plot = owsa_plot1, 
-       path = paste0(save_dir, "plots/"),
-       height = 12, width = 19, units = "in")
-ggsave("owsa_plot2.pdf", plot = owsa_plot2, 
-       path = paste0(save_dir, "plots/"),
-       height = 12, width = 19, units = "in")
-ggsave("owsa_plot2.1.pdf", plot = owsa_plot2.1,
-       path = paste0(save_dir, "plots/"),
-       height = 4, width = 6, units = "in")
-ggsave("twsa_plot1.pdf", plot = twsa_plot1,
-       path = paste0(save_dir, "plots/"),
-       height = 4, width = 6, units = "in")
+  pivot_wider(
+    names_from = measure,
+    values_from = value
+  ) |> 
+  add_row(
+    strategy = "trt", year = "0", 
+    mean = 0, lci = 0, uci = 0,
+  ) |> 
+  add_row(
+    strategy = "obs", year = "0", 
+    mean = 0, lci = 0, uci = 0,
+  ) |> 
+  add_row(
+    strategy = "delta", year = "0", 
+    mean = 0, lci = 0, uci = 0,
+  ) |> 
+  mutate(
+    year = as.numeric(year),
+    Strategy = case_when(
+      strategy == "obs" ~ "Observation",
+      strategy == "trt" ~ "Treatment",
+      strategy == "delta" ~ "Difference"
+    )
+  ) 
 
 
+# Read in raw result and obtain means and deltas
+# psa_result <- map(psa_files, readRDS) |> 
+#   tibble() |> 
+#   rename("raw" = 1) |> 
+#   unnest(raw) |> 
+#   mutate(
+#     trt_util = map(raw, ~ mean(.x[, "trt_util"])),
+#     obs_util = map(raw, ~ mean(.x[, "obs_util"])),
+#     delta_util = map(raw, ~ mean(.x[, "trt_util"] - .x[, "obs_util"])),
+#     trt_le = map(raw, ~ mean(.x[, "trt_le"])),
+#     obs_le = map(raw, ~ mean(.x[, "obs_le"])),
+#     delta_le = map(raw, ~ mean(.x[, "trt_le"] - .x[, "obs_le"])),
+#   ) |> 
+#   unnest(!1) |> 
+#   mutate(across(!raw, ~ .x / 12))
 
 ###########################################################
-### Statistics from baseline probabilities (Table 2)
+### Analyzing PSA
 
-###
-# For table
-# Probabilities in yearly percent
-baseline.vals |> 
-  rownames_to_column(var = "name") |> 
-  tibble() |> 
-  filter(str_starts(name, "p_")) |> 
-  filter(str_ends(name, "6mo") | str_ends(name, "late") | 
-           str_starts(name, "p_trtd") | name == "p_vis") |> 
-  mutate(across(2:4, ~ r_p(p_r(.x), 6) * 100))
+psa_summary <- psa_mean_total |> 
+  pivot_longer(
+    cols = starts_with(c("trt", "obs", "delta")),
+    names_to = c("strategy", ".value"),
+    names_sep = "_"
+  ) |> 
+  mutate(
+    avg_util = mean(util),
+    avg_le = mean(le), 
+    mcse_util = sd(util) / sqrt(niter),
+    mcse_le = sd(le) / sqrt(niter),
+    l95_util = quantile(util, 0.025),
+    u95_util = quantile(util, 0.975),
+    l95_le = quantile(le, 0.025),
+    u95_le = quantile(le, 0.975),
+    .by = strategy
+  ) |> 
+  select(!c(util, le)) |>
+  # relocate(starts_with("mcse"), .after = "delta_le") |> 
+  slice(1:3) |>
+  pivot_longer(
+    cols = !1,
+    names_to = c(".value", "outcome"),
+    names_sep = "_"
+  ) |> 
+  arrange(desc(outcome), desc(strategy))
 
-baseline.vals |> 
-  rownames_to_column(var = "name") |> 
-  tibble() |> 
-  filter(str_starts(name, "p_")) |> 
-  filter(!(str_ends(name, "6mo") | str_ends(name, "late") | 
-             str_starts(name, "p_trtd"))) |> 
-  mutate(across(2:4, ~ r_p(p_r(.x), 12) * 100))
+# Plot data
+psa_plot_data <- psa_mean_total |> 
+  pivot_longer(
+    cols = ends_with(c("util", "le")),
+    names_to = c("strategy", ".value"),
+    names_sep = "_"
+    ) |> 
+  mutate(avg_util = mean(util), 
+         avg_le = mean(le), 
+         .by = "strategy") |> 
+  mutate(
+    strategy = case_when(strategy == "trt" ~ "Treatment",
+                         strategy == "obs" ~ "Observation",
+                         strategy == "delta" ~ 
+                           "Treatment to Observation Difference"))
 
-baseline.vals |> 
-  rownames_to_column(var = "name") |> 
-  tibble() |> 
-  filter(!str_starts(name, "p_"))
+psa_plot1.1 <- psa_plot_data |> 
+  filter(strategy != "Treatment to Observation Difference") |> 
+  ggplot(aes(util)) + 
+  geom_histogram(aes(fill = strategy, colour = strategy),
+                 bins = 30, alpha = 0.8, position = "identity") +
+  geom_vline(aes(xintercept = avg_util), linetype = 2) + 
+  scale_colour_manual(values = colour1, aesthetics = c("colour", "fill")) +
+  scale_x_continuous(expand = c(0, 0), limits = c(0, 25)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 2500)) +
+  facet_wrap(vars(strategy), nrow = 2, scales = "free") + 
+  labs(x = "QALYs", y = "Count", fill = "Strategy") +
+  # theme_linedraw() +
+  theme_classic() +
+  theme(
+    strip.background = element_rect(colour = "white", fill = "white"),
+    strip.text = element_text(size = 14),
+    axis.line = element_line(),
+    # panel.grid.major = element_blank(),
+    # panel.grid.minor = element_blank(),
+    legend.position = "none",
+    axis.ticks.length = unit(5, "points")
+  )
 
+psa_plot1.2 <- psa_plot_data |>
+  filter(strategy == "Treatment to Observation Difference") |> 
+  mutate(strategy = "Treatment to Observation\nDifference") |> 
+  # mutate(util0 = ifelse(util > 0, "G", "L")) |> 
+  ggplot(aes(util)) + 
+  geom_histogram(
+    # aes(colour = util0, fill = util0),
+    colour = colour1[3], fill = colour1[3],
+    alpha = 0.8, bins = 30, 
+    position = "identity") +
+  # geom_vline(aes(xintercept = avg)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(aes(xintercept = avg_util), linetype = 2) + 
+  scale_x_continuous(expand = c(0, 0), limits = c(-2, 8)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 2500)) +
+  scale_fill_brewer(palette = "Set1") +
+  scale_colour_brewer(palette = "Set1") +
+  labs(x = "Difference in QALYs", y = "") +
+  facet_wrap(vars(strategy), nrow = 1) + 
+  theme_classic() +
+  theme(
+    strip.background = element_rect(colour = "white", fill = "white"),
+    strip.text = element_text(size = 14),
+    legend.position = "none",
+    axis.ticks.length = unit(5, "points")
+  )
 
-# Ten-year survival
-sum(life_expectancy(b.t$state_matrix[,1:(1 + 10 * 12)]) == (10 * 12)) / ni
-# [1] 0.8773
-sum(life_expectancy(b.o$state_matrix[,1:(1 + 10 * 12)]) == (10 * 12)) / ni
-# [1] 0.8292
+psa_plot1 <- psa_plot1.1 + psa_plot1.2 + 
+  plot_annotation(tag_levels = 'A')
 
-## Time on treatment
-mean(rowSums(b.t$state_matrix == "T" |
-               b.t$state_matrix == "TMV" | 
-               b.t$state_matrix == "TM1" |
-               b.t$state_matrix == "TM2" |
-               b.t$state_matrix == "TM1+2" |
-               b.t$state_matrix == "TMV+TM1" | 
-               b.t$state_matrix == "TMV+TM2" |
-               b.t$state_matrix == "TMV+TM1+2"))
-# [1] 24.5726
+# Plot 2
+psa_plot2.1 <- psa_plot_data |> 
+  filter(strategy != "Treatment to Observation Difference") |> 
+  ggplot(aes(le)) + 
+  geom_histogram(aes(fill = strategy, colour = strategy),
+                 bins = 30, alpha = 0.8, position = "identity") +
+  geom_vline(aes(xintercept = avg_le), linetype = 2) + 
+  scale_colour_manual(values = colour2, aesthetics = c("colour", "fill")) +
+  scale_x_continuous(expand = c(0, 0), limits = c(0, 25)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 3000)) +
+  facet_wrap(vars(strategy), nrow = 2, scales = "free") + 
+  labs(x = "Life Expectancy (Years)", y = "Count", 
+       fill = "Strategy") +
+  theme_classic() +
+  theme(
+    strip.background = element_rect(colour = "white", fill = "white"),
+    strip.text = element_text(size = 14),
+    legend.position = "none",
+    axis.ticks.length = unit(5, "points")
+  )
+  
 
-mean(rowSums(b.o$state_matrix == "T" |
-               b.o$state_matrix == "TMV" | 
-               b.o$state_matrix == "TM1" |
-               b.o$state_matrix == "TM2" |
-               b.o$state_matrix == "TM1+2" |
-               b.o$state_matrix == "TMV+TM1" | 
-               b.o$state_matrix == "TMV+TM2" |
-               b.o$state_matrix == "TMV+TM1+2"))
-# [1] 7.8998
+psa_plot2.2 <- psa_plot_data |>
+  filter(strategy == "Treatment to Observation Difference") |> 
+  mutate(strategy = "Treatment to Observation\nDifference") |> 
+  ggplot(aes(le)) + 
+  geom_histogram(
+    colour = colour2[3], fill = colour2[3],
+    alpha = 0.8, bins = 30, 
+    position = "identity") +
+  geom_vline(xintercept = 0) +
+  geom_vline(aes(xintercept = avg_le), linetype = 2) + 
+  scale_x_continuous(expand = c(0, 0), limits = c(-2, 8)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 3000)) +
+  scale_fill_brewer(palette = "Set1") +
+  scale_colour_brewer(palette = "Set1") +
+  labs(x = "Difference in Life Expectancy (Years)", y = "") +
+  facet_wrap(vars(strategy), nrow = 1) + 
+  theme_classic() +
+  theme(
+    axis.ticks.length = unit(5, "points"),
+    strip.background = element_rect(colour = "white", fill = "white"),
+    strip.text = element_text(size = 14)
+  )
 
-## Progress to treatment
-sum(b.t$obsTcounter > 0) / ni
-# [1] 0.3199
-sum(b.o$obsTcounter > 0) / ni
-# [1] 0.3612
+psa_plot2 <- psa_plot2.1 + psa_plot2.2 + 
+  plot_annotation(tag_levels = 'A')
 
-## Number of individuals on observation requiring treatment
-sum(rowSums(b.o$state_matrix == "T" |
-              b.o$state_matrix == "TMV" | 
-              b.o$state_matrix == "TM1" |
-              b.o$state_matrix == "TM2" |
-              b.o$state_matrix == "TM1+2" |
-              b.o$state_matrix == "TMV+TM1" | 
-              b.o$state_matrix == "TMV+TM2" |
-              b.o$state_matrix == "TMV+TM1+2") > 0) / ni
-# [1] 0.3612
+psa_plot_comb <- (psa_plot1.1 + psa_plot1.2) / 
+  (psa_plot2.1 + psa_plot2.2) + 
+  plot_annotation(tag_levels = "A")
 
-## Individuals with rifampin intolerance
-sum(rowSums(b.t$state_matrix == "TM1" | 
-              b.t$state_matrix == "TM1+2" |
-              b.t$state_matrix == "TMV+TM1" |
-              b.t$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0935
-sum(rowSums(b.o$state_matrix == "TM1" | 
-              b.o$state_matrix == "TM1+2" |
-              b.o$state_matrix == "TMV+TM1" |
-              b.o$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0308
+psa_plot3.1 <- psa_year |> 
+  filter(Strategy != "Difference") |> 
+  ggplot(aes(year, mean, 
+             group = Strategy, 
+             colour = Strategy)) + 
+  geom_line(lwd = 1.3, key_glyph = draw_key_rect) + 
+  geom_ribbon(aes(ymin = lci, ymax = uci, 
+                  fill = Strategy, colour = NULL),
+              alpha = 0.1) + 
+  scale_x_continuous(expand = c(0, 0), limits = c(0, 40)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 20)) +
+  scale_colour_manual(values = colour1, aesthetics = c("colour", "fill")) +
+  labs(x = "Year", y = "QALY") + 
+  theme_classic() +
+  theme(axis.ticks.length = unit(5, "points"))
 
-## Individuals with azi intolerance
-sum(rowSums(b.t$state_matrix == "TM2" | 
-              b.t$state_matrix == "TM1+2" |
-              b.t$state_matrix == "TMV+TM2" |
-              b.t$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0406
+psa_plot3.2 <- psa_year |> 
+  filter(Strategy == "Difference") |> 
+  ggplot(aes(year, mean)) + 
+  geom_line(lwd = 1.3, key_glyph = draw_key_rect, 
+            colour = colour1[3]) + 
+  geom_ribbon(aes(ymin = lci, ymax = uci, colour = NULL),
+              alpha = 0.2, fill = colour1[3]) + 
+  geom_hline(yintercept = 0) +
+  scale_x_continuous(expand = c(0, 0), limits = c(0, 40)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(-1, 5)) +
+  labs(x = "Year", y = "Difference in QALY") + 
+  theme_classic() +
+  theme(axis.ticks.length = unit(5, "points"))
 
-sum(rowSums(b.o$state_matrix == "TM2" | 
-              b.o$state_matrix == "TM1+2" |
-              b.o$state_matrix == "TMV+TM2" |
-              b.o$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0121
+psa_plot3 <- psa_plot3.1 / psa_plot3.2 + 
+  plot_annotation(tag_levels = 'A')
 
+ggsave("psa_plot1.pdf", plot = psa_plot1, 
+       path = paste0(save_dir, "plots/"),
+       height = 5, width = 10, units = "in")
 
-## Individuals with ethambutol intolerance
-sum(rowSums(b.t$state_matrix == "TMV" | 
-              b.t$state_matrix == "TMV+TM1" |
-              b.t$state_matrix == "TMV+TM2" |
-              b.t$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.013
-sum(rowSums(b.o$state_matrix == "TMV" | 
-              b.o$state_matrix == "TMV+TM1" |
-              b.o$state_matrix == "TMV+TM2" |
-              b.o$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0035
+ggsave("psa_plot2.pdf", plot = psa_plot2, 
+       path = paste0(save_dir, "plots/"),
+       height = 5, width = 10, units = "in")
 
-## More than one adverse event
-sum(rowSums(b.t$state_matrix == "TM1+2" | 
-              b.t$state_matrix == "TMV+TM1" |
-              b.t$state_matrix == "TMV+TM2" |
-              b.t$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0041
-sum(rowSums(b.o$state_matrix == "TM1+2" | 
-              b.o$state_matrix == "TMV+TM1" |
-              b.o$state_matrix == "TMV+TM2" |
-              b.o$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.001
+ggsave("psa_plot_comb.pdf", plot = psa_plot_comb, 
+       path = paste0(save_dir, "plots/"),
+       height = 8, width = 7, units = "in")
 
-## Individuals in the cure state
-sum(rowSums(b.t$state_matrix == "Cure") > 1) / ni
-# [1] 0.9592
-mean(rowSums(b.t$state_matrix == "Cure")) / 12
-# [1] 11.60068
-sum(rowSums(b.o$state_matrix == "Cure") > 1) / ni
-# [1] 0.9016
-mean(rowSums(b.o$state_matrix == "Cure")) / 12
-# [1] 8.815425
+ggsave("psa_plot3.pdf", plot = psa_plot3,
+       path = paste0(save_dir, "plots"),
+       height = 5, width = 7, units = "in")
+

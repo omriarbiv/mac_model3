@@ -2,19 +2,19 @@
 start_age,70,60,80,Start age
 p_prog,0.003652979,0.00182649,0.007305958,Probability of disease progression
 p_spont_cure,0.0140894,0,0.01907,Probability of spontaneous\nculture conversion
-p_cure_6mo,0.2172532,0.08161,0.31871,Probability of culture conversion \nat 6 months
-p_cure_late,0.05548,0.01542,0.08161,Probability of culture conversion\nafter 6 months
+p_cure_6mo,0.2172532,0.07782675,0.31871,Probability of culture conversion \nat 6 months
+p_cure_late,0.05548,0.01542,0.07782675,Probability of culture conversion\nafter 6 months
 p_trtd1,0.01014,0.001014,0.1014,Probability of rifampin intolerance
 p_trtd2,0.00428,0.000428,0.0428,Probability of azithromycin intolerance
 p_vis,0.00053,0.000053,0.0053,Probability of ethambutol intolerance
-p_cure_wo_emb_6mo,0.1605181,0.04698582,0.1303191,Probability of culture conversion before\n6 months without ethambutol
+p_cure_wo_emb_6mo,0.1605181,0.0816141,0.2172532,Probability of culture conversion before\n6 months without ethambutol
 p_cure_wo_emb_late,0.009558873,0,0.05548312,Probability of culture conversion after\n6 months without ethambutol
 p_cure_wo_rif_6mo,0.1935908,0.08161,0.31871,Probability of culture conversion before\n6 months without rifampin
 p_cure_wo_rif_late,0.01666667,0.01542,0.08161,Probability of culture conversion after\n6 months without rifampin
-p_cure_wo_azi_6mo,0.2172532,0.08161,0.31871,Probability of culture conversion before \n6 azithromycin modification
-p_cure_wo_azi_late,0.05548,0.01542,0.08161,Probability of culture conversion after\n6 months with azithromycin modification
+p_cure_wo_azi_6mo,0.2172532,0.08161,0.31871,Probability of culture conversion before \n6 months with macrolide modification
+p_cure_wo_azi_late,0.05548,0.01542,0.08161,Probability of culture conversion after\n6 months with macrolide modification
 p_recurrence,0.0154491,0.007,0.032,Probability of disease recurrence
-discount,0.015,0,0.03,Yearly discount
+discount,0,0,0.03,Yearly discount
 u_obv,0.82,0.729,1,Utility of clinical observation
 u_T,0.82,0.729,1,Utility of treatment
 DisU_SE_Rif,0.026,0.01,0.05,Disutilility from rifampin toxicity

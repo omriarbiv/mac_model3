@@ -3,12 +3,17 @@ library(parallel)
 source("microsim.R")
 source("Functions/functions.R")
 cycle_length <- 1 / 12
-save_dir <- "/scratch/oarbiv/mac_model3_results/"
-files_dir <- "/home/oarbiv/mac_model3/"
+# save_dir <- "/scratch/oarbiv/mac_model3_results/"
+save_dir <- "Results/no_discount/"
+# files_dir <- "/home/oarbiv/mac_model3/"
+files_dir <- ""
+
+colour1 <- c("#2D93AD", "#985F99", "#E9AFA3")
+colour2 <- c("#A3333D", "#F2D0A4", "#629677")
 
 ###########################################################
 ### Baseline values
-ni <- 100   # Number of people
+ni <- 1e4   # Number of people
 fl <- 40    # Years
 
 # Obtaining baseline values
@@ -72,15 +77,15 @@ base_result <- tibble(
   # se = c(sd(b.t$util_total), sd(b.o$util_total)) / sqrt(ni),
   life_expectancy = c(mean(life_expectancy(b.t$state_matrix)),
                       mean(life_expectancy(b.o$state_matrix)))) |> 
-  mutate(across(-1, ~ .x / 12))
+  mutate(qaly = qaly / 12,
+         life_expectancy = life_expectancy - 70)
 
-# saveRDS(base_result, file = "Results/base.RData")
-base_result <- readRDS("Results/base.RData")
+# saveRDS(base_result, file = "Results/no_discount/dsa/base.RData")
+base_result <- readRDS("Results/no_discount/dsa/base.RData")
 
 ###########################################################
 ### Running the one way DSA
-# not_in_dsa <- c("u_death")
-not_in_dsa <- c("u_death", "discount")
+not_in_dsa <- c("u_death")
 
 # Initiate empty list
 owsa_dsa <- lapply(dsa_val, \(x) 
@@ -93,8 +98,9 @@ dsa_params <- names(owsa_dsa)
 n_cores <- detectCores(logical = FALSE)
 # pb <- txtProgressBar(min = 1, max = length(dsa_params), style = 3)
 
-for(i in 1:length(dsa_params)){
+for(i in 1:length(dsa_params)){  
   print(i)
+
   # Seed
   s <- i + 2
   
@@ -158,7 +164,10 @@ for(i in 1:length(dsa_params)){
 
 
 # saveRDS(owsa_dsa, file = "Results/owsa_dsa.RData")
-# owsa_dsa <- readRDS("Results/owsa_dsa.RData")
+owsa_dsa <- readRDS("Results/no_discount/dsa/owsa_dsa.RData") |> 
+  map( ~ .x |> 
+      mutate(across(ends_with("util"), ~ .x / 12),
+             across(ends_with("le"), ~ .x - 70)))
 
 # owsa_dsa |> 
 #   bind_rows() |> 
@@ -278,7 +287,10 @@ for(i in 1:length(twsa_dsa)) {
 }
 
 # saveRDS(twsa_dsa, file = "Results/twsa_dsa.RData")
-# twsa_dsa <- readRDS("Results/twsa_dsa.RData")
+twsa_dsa <- readRDS("Results/no_discount/dsa/twsa_dsa.RData") |> 
+  map(~ .x |> 
+        mutate(across(ends_with("util"), ~ .x / 12),
+               across(ends_with("le"), ~ .x - 70)))
 
 twsa_dsa_summary <- twsa_dsa |>
   map(~ mutate(.x,
@@ -287,8 +299,9 @@ twsa_dsa_summary <- twsa_dsa |>
                le_strategy = ifelse(trt_le > obs_le,
                                     "Treatment", "Observation")))
 
-all(bind_rows(twsa_dsa_summary)$util_strategy == "Treatment")
-all(bind_rows(twsa_dsa_summary)$le_strategy == "Treatment")
+# all(bind_rows(twsa_dsa_summary)$util_strategy == "Treatment")
+# all(bind_rows(twsa_dsa_summary)$le_strategy == "Treatment")
+# which(bind_rows(twsa_dsa_summary)$le_strategy != "Treatment")
 
 ## plot
 twsa_plot1 <- twsa_dsa_summary[[5]] |>
@@ -300,20 +313,20 @@ twsa_plot1 <- twsa_dsa_summary[[5]] |>
        fill = "Strategy") +
   scale_x_continuous(expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0)) +
-  scale_fill_brewer(palette = "Set2") +
+  scale_colour_manual(values = colour2, aesthetics = c("colour", "fill")) +
   theme_linedraw()
 
-twsa_plot2 <- twsa_dsa_summary[[5]] |>
-  ggplot(aes(hr, hr_cc6m)) +
-  geom_tile(aes(fill = util_strategy), colour = "black") +
-  labs(x = "Hazard ratio of mortality for patients with MAC-PD",
-       y = paste("Hazard ratio of martality for patients with\n",
-                 "early culture conversion"),
-       fill = "Strategy") +
-  scale_x_continuous(expand = c(0, 0)) +
-  scale_y_continuous(expand = c(0, 0)) +
-  scale_fill_brewer(palette = "Set1") +
-  theme_linedraw()
+# twsa_plot2 <- twsa_dsa_summary[[5]] |>
+#   ggplot(aes(hr, hr_cc6m)) +
+#   geom_tile(aes(fill = util_strategy), colour = "black") +
+#   labs(x = "Hazard ratio of mortality for patients with MAC-PD",
+#        y = paste("Hazard ratio of martality for patients with\n",
+#                  "early culture conversion"),
+#        fill = "Strategy") +
+#   scale_x_continuous(expand = c(0, 0)) +
+#   scale_y_continuous(expand = c(0, 0)) +
+#   scale_colour_manual(values = colour1, aesthetics = c("colour", "fill")) +
+#   theme_linedraw()
 
 ###########################################################
 ### Plotting OWSA
@@ -350,8 +363,7 @@ owsa_dsa_long <- lapply(
                    r_p(p_r(value), 12),
                    value)
   ) |> 
-  mutate(full_name = str_replace_all(full_name, "\\\\n", "\n")) |> 
-  filter(name != "DisU_T")
+  mutate(full_name = str_replace_all(full_name, "\\\\n", "\n"))
 
 owsa_plot1 <- owsa_dsa_long |> 
   ggplot(aes(value, util)) + 
@@ -359,11 +371,11 @@ owsa_plot1 <- owsa_dsa_long |>
   facet_wrap(vars(full_name), scales = "free") + 
   theme_linedraw() +
   labs(x = "Parameter Value", y = "QALYs", colour = "Strategy") + 
-  scale_colour_brewer(palette = "Set1") +
+  scale_colour_manual(values = colour1, aesthetics = c("colour", "fill")) +
   scale_y_continuous(
     labels = scales::number_format(accuracy = 0.1)) +
   theme(panel.grid = element_blank(),
-        text = element_text(size = 14))
+        text = element_text(size = 13))
 
 owsa_plot2 <- owsa_dsa_long |> 
   ggplot(aes(value, le)) + 
@@ -372,11 +384,11 @@ owsa_plot2 <- owsa_dsa_long |>
   theme_linedraw() +
   labs(x = "Parameter Value", y = "Life Exectancy (Years)", 
        colour = "Strategy") + 
-  scale_colour_brewer(palette = "Set2") +
+  scale_colour_manual(values = colour2, aesthetics = c("colour", "fill")) +
   scale_y_continuous(
     labels = scales::number_format(accuracy = 0.1)) +
   theme(panel.grid = element_blank(),
-        text = element_text(size = 14))
+        text = element_text(size = 13))
 
 owsa_plot2.1 <- owsa_dsa_long |>
   filter(name == "hr_cc6m") |> 
@@ -386,20 +398,24 @@ owsa_plot2.1 <- owsa_dsa_long |>
   theme_linedraw() +
   labs(x = "Parameter Value", y = "Life Exectancy (Years)", 
        colour = "Strategy") + 
-  scale_colour_brewer(palette = "Set2") +
+  scale_colour_manual(values = colour2, aesthetics = c("colour", "fill")) +
   scale_y_continuous(
     labels = scales::number_format(accuracy = 0.1)) +
   theme(panel.grid = element_blank(),
         text = element_text(size = 14))
 
-# ggsave("owsa_plot1.pdf", plot = owsa_plot1, path = save_dir/
-#        height = 12, width = 19, units = "in")
-# ggsave("owsa_plot2.pdf", plot = owsa_plot2, path = "Plots/",
-#        height = 12, width = 19, units = "in")
-# ggsave("owsa_plot2.1.pdf", plot = owsa_plot2.1, path = "Plots/",
-#        height = 4, width = 6, units = "in")
-# ggsave("twsa_plot1.pdf", plot = twsa_plot1, path = "Plots/",
-#        height = 4, width = 6, units = "in")
+ggsave("owsa_plot1.pdf", plot = owsa_plot1, 
+       path = paste0(save_dir, "plots/"),
+       height = 12, width = 19, units = "in")
+ggsave("owsa_plot2.pdf", plot = owsa_plot2, 
+       path = paste0(save_dir, "plots/"),
+       height = 12, width = 19, units = "in")
+ggsave("owsa_plot2.1.pdf", plot = owsa_plot2.1,
+       path = paste0(save_dir, "plots/"),
+       height = 4, width = 6, units = "in")
+ggsave("twsa_plot1.pdf", plot = twsa_plot1,
+       path = paste0(save_dir, "plots/"),
+       height = 4, width = 6, units = "in")
 
 
 
@@ -432,10 +448,10 @@ baseline.vals |>
 
 
 # Ten-year survival
-sum(life_expectancy(b.t$state_matrix[,1:(1 + 10 * 12)]) == (10 * 12)) / ni
-# [1] 0.8773
-sum(life_expectancy(b.o$state_matrix[,1:(1 + 10 * 12)]) == (10 * 12)) / ni
-# [1] 0.8292
+sum(life_expectancy(b.t$state_matrix) >= 80) / ni
+# [1] 0.8064
+sum(life_expectancy(b.o$state_matrix) >= 80) / ni
+# [1] 0.7335
 
 ## Time on treatment
 mean(rowSums(b.t$state_matrix == "T" |
@@ -446,7 +462,7 @@ mean(rowSums(b.t$state_matrix == "T" |
                b.t$state_matrix == "TMV+TM1" | 
                b.t$state_matrix == "TMV+TM2" |
                b.t$state_matrix == "TMV+TM1+2"))
-# [1] 24.5726
+# [1] 22.7327
 
 mean(rowSums(b.o$state_matrix == "T" |
                b.o$state_matrix == "TMV" | 
@@ -456,13 +472,32 @@ mean(rowSums(b.o$state_matrix == "T" |
                b.o$state_matrix == "TMV+TM1" | 
                b.o$state_matrix == "TMV+TM2" |
                b.o$state_matrix == "TMV+TM1+2"))
-# [1] 7.8998
+# [1] 6.3544
 
 ## Progress to treatment
 sum(b.t$obsTcounter > 0) / ni
-# [1] 0.3199
+# [1] 0.2614
 sum(b.o$obsTcounter > 0) / ni
-# [1] 0.3612
+# [1] 0.3047
+
+## Number of individuals requiring treatment modification
+mean(rowSums(b.t$state_matrix == "TMV" | 
+               b.t$state_matrix == "TM1" |
+               b.t$state_matrix == "TM2" |
+               b.t$state_matrix == "TM1+2" |
+               b.t$state_matrix == "TMV+TM1" | 
+               b.t$state_matrix == "TMV+TM2" |
+               b.t$state_matrix == "TMV+TM1+2") > 0)
+# [1] 0.1291
+
+mean(rowSums(b.o$state_matrix == "TMV" | 
+               b.o$state_matrix == "TM1" |
+               b.o$state_matrix == "TM2" |
+               b.o$state_matrix == "TM1+2" |
+               b.o$state_matrix == "TMV+TM1" | 
+               b.o$state_matrix == "TMV+TM2" |
+               b.o$state_matrix == "TMV+TM1+2") > 0)
+# [1] 0.038
 
 ## Number of individuals on observation requiring treatment
 sum(rowSums(b.o$state_matrix == "T" |
@@ -473,32 +508,32 @@ sum(rowSums(b.o$state_matrix == "T" |
               b.o$state_matrix == "TMV+TM1" | 
               b.o$state_matrix == "TMV+TM2" |
               b.o$state_matrix == "TMV+TM1+2") > 0) / ni
-# [1] 0.3612
+# [1] 0.3047
 
 ## Individuals with rifampin intolerance
 sum(rowSums(b.t$state_matrix == "TM1" | 
               b.t$state_matrix == "TM1+2" |
               b.t$state_matrix == "TMV+TM1" |
               b.t$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0935
+# [1] 0.0844
 sum(rowSums(b.o$state_matrix == "TM1" | 
               b.o$state_matrix == "TM1+2" |
               b.o$state_matrix == "TMV+TM1" |
               b.o$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0308
+# [1] 0.0253
 
 ## Individuals with azi intolerance
 sum(rowSums(b.t$state_matrix == "TM2" | 
               b.t$state_matrix == "TM1+2" |
               b.t$state_matrix == "TMV+TM2" |
               b.t$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0406
+# [1] 0.0371
 
 sum(rowSums(b.o$state_matrix == "TM2" | 
               b.o$state_matrix == "TM1+2" |
               b.o$state_matrix == "TMV+TM2" |
               b.o$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0121
+# [1] 0.0108
 
 
 ## Individuals with ethambutol intolerance
@@ -506,32 +541,32 @@ sum(rowSums(b.t$state_matrix == "TMV" |
               b.t$state_matrix == "TMV+TM1" |
               b.t$state_matrix == "TMV+TM2" |
               b.t$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.013
+# [1] 0.0118
 sum(rowSums(b.o$state_matrix == "TMV" | 
               b.o$state_matrix == "TMV+TM1" |
               b.o$state_matrix == "TMV+TM2" |
               b.o$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0035
+# [1] 0.0031
 
 ## More than one adverse event
 sum(rowSums(b.t$state_matrix == "TM1+2" | 
               b.t$state_matrix == "TMV+TM1" |
               b.t$state_matrix == "TMV+TM2" |
               b.t$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.0041
+# [1] 0.0036
 sum(rowSums(b.o$state_matrix == "TM1+2" | 
               b.o$state_matrix == "TMV+TM1" |
               b.o$state_matrix == "TMV+TM2" |
               b.o$state_matrix == "TMV+TM1+2") > 1) / ni
-# [1] 0.001
+# [1] 8e-04
 
 ## Individuals in the cure state
 sum(rowSums(b.t$state_matrix == "Cure") > 1) / ni
-# [1] 0.9592
+# [1] 0.9414
 mean(rowSums(b.t$state_matrix == "Cure")) / 12
-# [1] 11.60068
+# [1] 9.635833
 sum(rowSums(b.o$state_matrix == "Cure") > 1) / ni
-# [1] 0.9016
+# [1] 0.8535
 mean(rowSums(b.o$state_matrix == "Cure")) / 12
-# [1] 8.815425
+# [1] 6.797483
 
