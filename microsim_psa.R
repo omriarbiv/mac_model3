@@ -432,6 +432,8 @@ psa_plot3.1 <- psa_year |>
   theme_classic() +
   theme(axis.ticks.length = unit(5, "points"))
 
+tick_pos <- data.frame(x = seq(10, 40, by = 10))
+
 psa_plot3.2 <- psa_year |> 
   filter(Strategy == "Difference") |> 
   ggplot(aes(year, mean)) + 
@@ -440,11 +442,22 @@ psa_plot3.2 <- psa_year |>
   geom_ribbon(aes(ymin = lci, ymax = uci, colour = NULL),
               alpha = 0.2, fill = colour1[3]) + 
   geom_hline(yintercept = 0) +
+  geom_segment(data = tick_pos, 
+               aes(x = x, xend = x, y = 0, yend = -0.25),
+               inherit.aes = F) +
+  geom_text(data = tick_pos,
+            aes(x = x, y = -0.5, label = x),
+            inherit.aes = F, 
+            size = 3) +
   scale_x_continuous(expand = c(0, 0), limits = c(0, 40)) +
   scale_y_continuous(expand = c(0, 0), limits = c(-1, 5)) +
   labs(x = "Year", y = "Difference in QALY") + 
   theme_classic() +
-  theme(axis.ticks.length = unit(5, "points"))
+  theme(axis.ticks.length.y = unit(5, "points"),
+        axis.line.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  coord_cartesian(clip = "off")
 
 psa_plot3 <- psa_plot3.1 / psa_plot3.2 + 
   plot_annotation(tag_levels = 'A')

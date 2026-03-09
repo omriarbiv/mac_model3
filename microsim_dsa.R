@@ -169,10 +169,10 @@ owsa_dsa <- readRDS("Results/no_discount/dsa/owsa_dsa.RData") |>
       mutate(across(ends_with("util"), ~ .x / 12),
              across(ends_with("le"), ~ .x - 70)))
 
-# owsa_dsa |> 
-#   bind_rows() |> 
-#   mutate(util_trt_pref = trt_util > obs_util) |> 
-#   mutate(util_le_pref = trt_le > obs_le) |> 
+# owsa_dsa |>
+#   bind_rows() |>
+#   mutate(util_trt_pref = trt_util > obs_util) |>
+#   mutate(util_le_pref = trt_le > obs_le) |>
 #   summarize(
 #     util_trt_pref = all(util_trt_pref),
 #     util_le_pref = all(util_le_pref)
